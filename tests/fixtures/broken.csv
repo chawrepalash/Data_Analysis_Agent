@@ -1,0 +1,7 @@
+id,age,country,status,signup_date
+1,25,India,active,2025-01-05
+2,thirty,India,active,2025-01-06
+3,41,USA,active,06/01/2025
+3,41,USA,active,06/01/2025
+4,,UK,active,2025-01-09
+5,29,,active,not available
