@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 class ToolResult(BaseModel):
     ok: bool
     summary: str = ""  # one sentence the LLM can quote
-    data: dict[str, Any] = Field(default_factory=dict)  # compact numbers and examples
+    # compact numbers and examples
+    data: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     hint: str | None = None  # e.g. the list of valid column names
 
@@ -19,3 +20,12 @@ def ok_result(summary: str, **data: Any) -> ToolResult:
 
 def error_result(error: str, hint: str | None = None) -> ToolResult:
     return ToolResult(ok=False, error=error, hint=hint)
+
+
+class ProposeCleaningArgs(BaseModel):
+    dataset_id: str
+
+
+class ApplyCleaningArgs(BaseModel):
+    dataset_id: str
+    fix_ids: list[str] = Field(min_length=1, max_length=50)
