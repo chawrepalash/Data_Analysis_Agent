@@ -8,7 +8,10 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
 
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+import config
+
+# .env GEMINI_MODEL overrides config.py (useful for testing different models)
+MODEL_NAME = os.getenv("GEMINI_MODEL", config.GEMINI_MODEL)
 TEMPERATURE = 0.0
 
 
