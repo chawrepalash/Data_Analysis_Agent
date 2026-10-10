@@ -29,16 +29,20 @@ MAX_PROFILE_CHARS = 12000  # cap on the profile shown to the LLM
 MAX_ISSUES_IN_PROMPT = 10
 CHART_PLACEHOLDER = "[chart created and stored for the UI]"
 
+MIN_ANALYSES = 2           # successful non-chart tool calls wanted before summarizing
+MIN_CHARTS = 1             # charts wanted before summarizing
+CHART_TOOL = "create_chart"
+
 PLAN_PROMPT = (
     "Dataset profile and data quality issues (JSON):\n{profile}\n\n"
-    "Choose 2 to 4 high-value analyses (descriptive statistics, correlations, outliers or "
-    "group aggregates) and 1 or 2 charts that together give a good overview of this dataset. "
-    "Call the tools now. Use only column names that appear in the profile."
-)
-RETRY_PROMPT = (
-    "Some tool calls failed, or no tools were called. Read each error and hint, fix the "
-    "arguments, and call only the tools that still need to run. Do not repeat calls that "
-    "already succeeded."
+    "Call ALL the tools you need together in this one step. Include:\n"
+    "- 2 to 4 analyses, among them at least one group_aggregate that compares a meaningful "
+    "measure across a meaningful category (for example the mean of a numeric or 0/1 column "
+    "by a category column), plus describe_stats, correlation_analysis or detect_outliers "
+    "where they add value;\n"
+    "- 1 or 2 create_chart calls that show the most important pattern.\n"
+    "Do not average identifier or code columns (ids, ticket numbers, zip codes). "
+    "Use only column names that appear in the profile."
 )
 
 
@@ -110,6 +114,39 @@ def _latest_tool_messages(messages: list[Any]) -> list[ToolMessage]:
 # Auto-analysis node 2: plan (LLM call)
 # --------------------------------------------------------------------------
 
+def _coverage_gaps(state: AgentState) -> list[str]:
+    """What the analysis is still missing: enough analyses and at least one chart."""
+    ok_tools = [
+        m for m in state.get("messages", [])
+        if isinstance(m, ToolMessage) and m.status != "error"
+    ]
+    analyses = sum(1 for m in ok_tools if m.name != CHART_TOOL)
+    gaps = []
+    if analyses < MIN_ANALYSES:
+        gaps.append(f"at least {MIN_ANALYSES - analyses} more analysis tool call(s)")
+    if len(state.get("charts", [])) < MIN_CHARTS:
+        gaps.append(f"at least {MIN_CHARTS} {CHART_TOOL} call")
+    return gaps
+
+
+def _retry_prompt(state: AgentState) -> str:
+    """The nudge sent on a second planning attempt, based on what went wrong."""
+    batch = _latest_tool_messages(list(state.get("messages", [])))
+    parts = []
+    if not batch:
+        parts.append("No tools were called.")
+    elif any(m.status == "error" for m in batch):
+        parts.append("Some tool calls failed. Read each error and hint and fix the arguments.")
+    gaps = _coverage_gaps(state)
+    if gaps:
+        parts.append("The analysis still needs " + " and ".join(gaps) + ".")
+    parts.append(
+        "Do not repeat calls that already succeeded. "
+        "Call all the tools you need together in this one step."
+    )
+    return " ".join(parts)
+
+
 def plan_node(state: AgentState, llm: Any, tools: list[Any]) -> dict[str, Any]:
     """Auto-analysis Node 2: LLM decides what analyses to run based on the profile.
 
@@ -128,7 +165,7 @@ def plan_node(state: AgentState, llm: Any, tools: list[Any]) -> dict[str, Any]:
         new_messages.append(opener)
         history = [opener]
     else:
-        nudge = HumanMessage(content=RETRY_PROMPT)
+        nudge = HumanMessage(content=_retry_prompt(state))
         new_messages.append(nudge)
         history = history + [nudge]
 
@@ -239,11 +276,13 @@ def run_tools_node(state: AgentState, execute_tool: ToolExecutor) -> dict[str, A
 
 
 def route_after_tools(state: AgentState) -> str:
-    """Retry planning once if any call failed or none were made; otherwise summarize."""
+    """Plan once more if a call failed, none were made, or the analysis is too shallow."""
     if state.get("rounds", 0) >= MAX_PLAN_ATTEMPTS:
         return "summarize"
     batch = _latest_tool_messages(list(state.get("messages", [])))
     if not batch or any(m.status == "error" for m in batch):
+        return "plan"
+    if _coverage_gaps(state):
         return "plan"
     return "summarize"
 
@@ -320,41 +359,66 @@ def summarize_node(state: AgentState, llm: Any) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Chat graph nodes (unchanged from the previous version)
+# Chat graph nodes
+#
+#   START -> chat_agent --(tool calls, budget left)--> run_tools -> chat_agent
+#                |
+#                +--(no tool calls)--> END
+#
+# When the tool budget is used up, chat_agent calls the model WITHOUT tools, so it has
+# to answer from what it already has and cannot leave a tool call unanswered.
 # --------------------------------------------------------------------------
 
-def chat_agent_node(state: AgentState, llm_with_tools: Any) -> dict[str, Any]:
-    """Chat Node: Agent inspects history + profile and decides next tool or answers."""
-    messages = list(state.get("messages", []))
+MAX_CHAT_ROUNDS = 5  # tool rounds allowed per question
 
-    if not messages or not isinstance(messages[0], SystemMessage):
-        prof_snippet = json.dumps(state.get("profile", {}), indent=2)
-        sys_content = f"{CHAT_SYSTEM_PROMPT}\n\nDataset Profile:\n{prof_snippet}"
-        messages = [SystemMessage(content=sys_content)] + messages
+CHAT_RULES = (
+    "Rules for this chat:\n"
+    "- Every number in your answer must come from a tool result in this conversation. "
+    "Never compute, estimate or recall numbers yourself.\n"
+    "- Answer the question that was asked first, with its headline number. Add a breakdown only "
+    "if it helps or was asked for. For one number about a subset (for example the rate for "
+    "children under 10), use group_aggregate with filters and an empty group_by.\n"
+    "- Use group_aggregate for comparisons and filtered questions, describe_stats for a "
+    "column's distribution, correlation_analysis for relationships, detect_outliers for "
+    "extreme values and create_chart when a chart is asked for or clearly helps.\n"
+    "- A chart is shown to the user automatically. Do not describe how it looks beyond "
+    "what the numbers say.\n"
+    "- Use only column names from the profile. If a tool returns an error, read the hint and "
+    "try once more with corrected arguments.\n"
+    "- If the data cannot answer the question, say so plainly and say what is missing.\n"
+    "- Answer in a few clear sentences. Mention any filter you applied."
+)
+LIMIT_PROMPT = (
+    "The tool budget for this question is used up. Answer now using only the tool results "
+    "above. If something could not be answered, say so plainly. Do not call tools."
+)
+EMPTY_ANSWER = "I could not produce an answer. Please try rephrasing the question."
 
-    response = llm_with_tools.invoke(messages)
+
+def chat_agent_node(state: AgentState, llm: Any, tools: list[Any]) -> dict[str, Any]:
+    """Chat node: the model answers, or asks for tools. Sees the profile, never the data."""
+    profile_text = _compact(state.get("profile", {}))
+    if len(profile_text) > MAX_PROFILE_CHARS:
+        profile_text = profile_text[:MAX_PROFILE_CHARS] + "...[truncated]"
+    system = SystemMessage(
+        content=f"{CHAT_SYSTEM_PROMPT}\n\n{CHAT_RULES}\n\nDataset profile (JSON):\n{profile_text}"
+    )
+    history = list(state.get("messages", []))
+
+    if state.get("rounds", 0) >= MAX_CHAT_ROUNDS:
+        model = llm
+        history = history + [HumanMessage(content=LIMIT_PROMPT)]
+    else:
+        model = llm.bind_tools(tools)
+
+    response = invoke_with_retry(model, [system] + history)
     return {"messages": [response]}
 
 
-def chat_count_round_node(state: AgentState) -> dict[str, Any]:
-    """Chat Node: Increments round count and updates execution trace."""
-    current_rounds = state.get("rounds", 0) + 1
-    new_trace = list(state.get("trace", []))
-    new_charts = list(state.get("charts", []))
-
-    for msg in state.get("messages", []):
-        if isinstance(msg, ToolMessage):
-            try:
-                res_dict = json.loads(msg.content)
-                if isinstance(res_dict, dict) and res_dict.get("data", {}).get("chart_json"):
-                    chart_json = res_dict["data"]["chart_json"]
-                    if chart_json not in new_charts:
-                        new_charts.append(chart_json)
-            except Exception:
-                pass
-
-    return {
-        "rounds": current_rounds,
-        "trace": new_trace,
-        "charts": new_charts,
-    }
+def route_after_chat_agent(state: AgentState) -> str:
+    """Run tools if the model asked for them and the budget allows; otherwise finish."""
+    last = _last_ai_message(list(state.get("messages", [])))
+    wants_tools = bool(getattr(last, "tool_calls", None))
+    if wants_tools and state.get("rounds", 0) < MAX_CHAT_ROUNDS:
+        return "run_tools"
+    return "end"

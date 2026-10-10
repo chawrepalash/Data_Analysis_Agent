@@ -11,7 +11,6 @@ from src.agent.graph import build_auto_graph, new_state, run_auto_analysis
 from src.agent.nodes import (
     CHART_PLACEHOLDER,
     MAX_CALLS_PER_STEP,
-    RETRY_PROMPT,
     run_tools_node,
 )
 from src.loader import DatasetStore
@@ -61,6 +60,10 @@ def describe(args):
     return ok_result("Revenue mean is 100.", mean=100)
 
 
+def outliers(args):
+    return ok_result("Revenue has 2 outliers.", outliers=2)
+
+
 def chart(args):
     return ok_result("Bar chart of revenue by region.", chart_json=CHART)
 
@@ -69,7 +72,11 @@ class FakeTools:
     """Executor with the same shape as the registry's: (name, args, dataset_id) -> ToolResult."""
 
     def __init__(self):
-        self.handlers = {"describe_stats": describe, "create_chart": chart}
+        self.handlers = {
+            "describe_stats": describe,
+            "detect_outliers": outliers,
+            "create_chart": chart,
+        }
         self.calls = []
 
     def __call__(self, name, args, dataset_id):
@@ -77,6 +84,15 @@ class FakeTools:
         if name not in self.handlers:
             return error_result(f"Unknown tool '{name}'.", hint="Valid tools: " + ", ".join(self.handlers))
         return self.handlers[name](args)
+
+
+def full_plan():
+    """A plan that meets the coverage rule: two analyses and a chart."""
+    return tool_calls(
+        ("describe_stats", {"columns": ["revenue"]}),
+        ("detect_outliers", {"column": "revenue"}),
+        ("create_chart", {"x": "region"}),
+    )
 
 
 def make_store(rows=40):
@@ -108,14 +124,13 @@ def text_of(messages):
 def test_happy_path():
     final, llm, tools, dataset_id = run(
         [
-            tool_calls(("describe_stats", {"columns": [
-                       "revenue"]}), ("create_chart", {"x": "region"})),
+            full_plan(),
             AIMessage(content="Revenue averages 100."),
         ]
     )
     assert final["findings"] == "Revenue averages 100."
     assert [t["tool"] for t in final["trace"]] == [
-        "profile_dataset", "validate_data", "describe_stats", "create_chart",
+        "profile_dataset", "validate_data", "describe_stats", "detect_outliers", "create_chart",
     ]
     assert all(t["ok"] for t in final["trace"])
     assert final["charts"] == [CHART]
@@ -125,16 +140,14 @@ def test_happy_path():
 
 def test_dataset_id_comes_from_state_not_from_the_llm():
     final, llm, tools, dataset_id = run(
-        [tool_calls(("describe_stats", {"columns": ["revenue"]})), AIMessage(
-            content="ok")]
+        [full_plan(), AIMessage(content="ok")]
     )
-    assert [c[2] for c in tools.calls] == [dataset_id]
+    assert {c[2] for c in tools.calls} == {dataset_id}
 
 
 def test_plan_prompt_has_system_prompt_and_profile():
     final, llm, tools, dataset_id = run(
-        [tool_calls(("describe_stats", {"columns": ["revenue"]})), AIMessage(
-            content="ok")]
+        [full_plan(), AIMessage(content="ok")]
     )
     first_call = llm.calls[0]
     assert isinstance(first_call[0], SystemMessage)
@@ -144,8 +157,7 @@ def test_plan_prompt_has_system_prompt_and_profile():
 
 def test_chart_json_is_kept_out_of_what_the_llm_sees():
     final, llm, tools, dataset_id = run(
-        [tool_calls(("create_chart", {"x": "region"})),
-         AIMessage(content="ok")]
+        [full_plan(), AIMessage(content="ok")]
     )
     seen_by_summarizer = text_of(llm.calls[1])
     assert CHART not in seen_by_summarizer
@@ -156,7 +168,7 @@ def test_chart_json_is_kept_out_of_what_the_llm_sees():
 def test_list_style_reply_becomes_plain_text():
     final, *_ = run(
         [
-            tool_calls(("describe_stats", {"columns": ["revenue"]})),
+            full_plan(),
             AIMessage(content=[{"type": "text", "text": "Findings here."}]),
         ]
     )
@@ -182,8 +194,8 @@ def test_failed_call_is_retried_once_and_the_model_sees_the_error():
     second_plan = llm.calls[1]
     errors = [m for m in second_plan if isinstance(m, ToolMessage)]
     assert errors[0].status == "error" and "Valid columns" in errors[0].content
-    assert any(isinstance(m, HumanMessage) and m.content ==
-               RETRY_PROMPT for m in second_plan)
+    nudge = [m for m in second_plan if isinstance(m, HumanMessage)][-1]
+    assert "failed" in nudge.content and "Do not repeat" in nudge.content
 
     summary_input = text_of(llm.calls[2])
     assert "bogus" not in summary_input  # the failure was fixed, so it is dropped
@@ -230,6 +242,55 @@ def test_a_tool_that_crashes_does_not_crash_the_graph():
     crashed = next(t for t in final["trace"] if t["tool"] == "describe_stats")
     assert crashed["ok"] is False and "boom" in crashed["summary"]
     assert final["findings"] == "ok"
+
+
+# ------------------------- shallow plans get topped up -------------------------
+
+def test_shallow_first_plan_is_topped_up_once():
+    final, llm, tools, _ = run(
+        [
+            tool_calls(("describe_stats", {"columns": [
+                       "revenue"]}), ("create_chart", {"x": "region"})),
+            tool_calls(("detect_outliers", {"column": "revenue"})),
+            AIMessage(content="Deeper."),
+        ]
+    )
+    assert len(llm.calls) == 3
+    assert final["rounds"] == 2
+    nudge = [m for m in llm.calls[1] if isinstance(
+        m, HumanMessage)][-1].content
+    assert "1 more analysis" in nudge and "failed" not in nudge
+    assert [t["tool"] for t in final["trace"]][2:] == [
+        "describe_stats", "create_chart", "detect_outliers"]
+
+
+def test_plan_without_a_chart_is_asked_for_one():
+    final, llm, tools, _ = run(
+        [
+            tool_calls(("describe_stats", {"columns": ["revenue"]}), ("detect_outliers", {
+                       "column": "revenue"})),
+            tool_calls(("create_chart", {"x": "region"})),
+            AIMessage(content="With chart."),
+        ]
+    )
+    assert len(llm.calls) == 3
+    nudge = [m for m in llm.calls[1] if isinstance(
+        m, HumanMessage)][-1].content
+    assert "create_chart" in nudge
+    assert final["charts"] == [CHART]
+
+
+def test_coverage_retry_happens_at_most_once():
+    final, llm, tools, _ = run(
+        [
+            tool_calls(("describe_stats", {"columns": ["revenue"]})),
+            tool_calls(("describe_stats", {"columns": ["revenue"]})),
+            AIMessage(content="Best effort."),
+        ]
+    )
+    assert len(llm.calls) == 3  # plan, one top-up, summarize
+    assert final["rounds"] == 2
+    assert final["findings"] == "Best effort."
 
 
 # ---------------------------- the model gives no plan ----------------------------

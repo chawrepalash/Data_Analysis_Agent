@@ -1,11 +1,11 @@
 ### Key Findings
 
-1. **Overall Survival Rate:** Across the dataset of 891 rows, the overall mean survival rate is 0.3838 (approximately 38.4%), with a median survival value of 0.0.
-2. **Passenger Class Distribution:** The average passenger class (`Pclass`) is 2.3086, with a median of 3.0, indicating that the majority of passengers were concentrated in the lower classes (ranging from a minimum of 1.0 to a maximum of 3.0).
-3. **Passenger Age Statistics:** For the 714 passengers with recorded ages (leaving 177 missing values, or 19.9%), the mean age is 29.6991 years, the median is 28.0 years, and the ages range from a minimum of 0.42 years to a maximum of 80.0 years. *(Note: The 19.9% missing values in 'Age' should be considered when evaluating age-related conclusions).*
-4. **Fare Variations:** Passenger fares (`Fare`) average 32.2042, with a median of 14.4542, a standard deviation of 49.6934, and a wide spread ranging from a minimum of 0.0 up to a maximum of 512.3292.
+1. **Survival Rates by Gender:** Female passengers had a significantly higher survival rate at 0.742 (74.2%) across 314 recorded passengers, compared to male passengers who had a survival rate of 0.1889 (18.9%) across 577 recorded passengers.
+2. **Survival Rates and Fares by Passenger Class:** Survival rates and average fares varied substantially by passenger class (`Pclass`). Class 1 recorded the highest survival mean of 0.6296 and the highest mean fare of 84.1547. Class 2 had a survival mean of 0.4728 and a mean fare of 20.6622. Class 3 had the lowest survival mean of 0.2424 and the lowest mean fare of 13.6756.
+3. **Correlation Between Passenger Class and Fare:** There is a strong negative Pearson correlation of -0.5495 between `Pclass` and `Fare`, indicating that higher passenger classes (represented by lower numerical class values) were associated with substantially higher ticket fares.
+4. **Data Quality Impact:** Analysis of the `Age` column should account for data quality limitations, as there are 177 missing values (19.9% of the 891 total rows). Similarly, the `Cabin` column has a high missing value rate of 77.1% (687 missing values), and the `Ticket` column contains 230 non-numeric mixed values.
 
 ### Follow-Up Questions
 
-1. How do survival rates break down across the different passenger classes (`Pclass`) and age groups?
-2. Is there a direct correlation between the price of the ticket (`Fare`) and a passenger's likelihood of survival?
+1. How do survival rates break down when combining both passenger class (`Pclass`) and gender (`Sex`)?
+2. What is the distribution of the 177 missing `Age` values across different passenger classes and survival outcomes?

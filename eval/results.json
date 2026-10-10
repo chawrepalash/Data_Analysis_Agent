@@ -1,0 +1,253 @@
+{
+  "model": "gemini-2.5-flash",
+  "data": "titanic.csv",
+  "summary": {
+    "total": 19,
+    "scored": 19,
+    "errors": 0,
+    "passed": 18,
+    "accuracy": 0.947,
+    "avg_seconds": 3.1,
+    "avg_tool_calls": 1.42
+  },
+  "cases": [
+    {
+      "case_id": "rows",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "describe_stats"
+      ],
+      "seconds": 3.124716281890869,
+      "answer": "There are 891 passengers in the dataset.",
+      "error": null,
+      "question": "How many passengers are in the dataset?"
+    },
+    {
+      "case_id": "overall_rate",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate",
+        "describe_stats"
+      ],
+      "seconds": 4.064573049545288,
+      "answer": "The overall survival rate is 38.38% (calculated across 891 passengers).",
+      "error": null,
+      "question": "What is the overall survival rate?"
+    },
+    {
+      "case_id": "rate_by_sex",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate"
+      ],
+      "seconds": 2.4491026401519775,
+      "answer": "The survival rate for women was 74.20% (out of 314 passengers), while the survival rate for men was 18.89% (out of 577 passengers).",
+      "error": null,
+      "question": "What was the survival rate for men and for women?"
+    },
+    {
+      "case_id": "rate_by_class",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate",
+        "group_aggregate"
+      ],
+      "seconds": 3.5278754234313965,
+      "answer": "The survival rate by passenger class (Pclass) is as follows:\n- **1st Class**: 62.96% (216 passengers)\n- **2nd Class**: 47.28% (184 passengers)\n- **3rd Class**: 24.24% (491 passengers)",
+      "error": null,
+      "question": "What was the survival rate in each passenger class?"
+    },
+    {
+      "case_id": "women_first",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate"
+      ],
+      "seconds": 2.2098276615142822,
+      "answer": "For women in first class, the survival rate was 96.81% (or 0.9681), with a total of 94 passengers.",
+      "error": null,
+      "question": "What was the survival rate for women in first class, and how many were there?"
+    },
+    {
+      "case_id": "men_third",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate"
+      ],
+      "seconds": 2.5398526191711426,
+      "answer": "A total of 347 men travelled in third class, and their survival rate was approximately 13.54% (or 0.1354).",
+      "error": null,
+      "question": "How many men travelled in third class and what share survived?"
+    },
+    {
+      "case_id": "fare_by_class",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate"
+      ],
+      "seconds": 2.386934995651245,
+      "answer": "The average fare for each passenger class was:\n- 1st Class: 84.15\n- 2nd Class: 20.66\n- 3rd Class: 13.68",
+      "error": null,
+      "question": "What was the average fare in each class?"
+    },
+    {
+      "case_id": "mean_age",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "describe_stats"
+      ],
+      "seconds": 2.255310297012329,
+      "answer": "The average age of passengers is 29.70 years (calculated across 714 passengers with recorded ages, while 177 passengers have missing age values).",
+      "error": null,
+      "question": "What is the average age of passengers?"
+    },
+    {
+      "case_id": "median_fare",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "describe_stats"
+      ],
+      "seconds": 2.105888843536377,
+      "answer": "The median fare is 14.4542.",
+      "error": null,
+      "question": "What is the median fare?"
+    },
+    {
+      "case_id": "max_fare",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "describe_stats"
+      ],
+      "seconds": 2.2357208728790283,
+      "answer": "The highest fare paid was 512.3292.",
+      "error": null,
+      "question": "What was the highest fare paid?"
+    },
+    {
+      "case_id": "fare_outliers",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "detect_outliers"
+      ],
+      "seconds": 2.4956612586975098,
+      "answer": "There are 116 fare outliers (all above the upper bound of 65.63) detected using the IQR method.",
+      "error": null,
+      "question": "How many fare outliers are there?"
+    },
+    {
+      "case_id": "corr_class_fare",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "correlation_analysis"
+      ],
+      "seconds": 2.059314250946045,
+      "answer": "The Pearson correlation coefficient between passenger class (`Pclass`) and fare (`Fare`) is -0.5495 (or approximately -0.55). This indicates a moderate-to-strong negative correlation, meaning passengers in lower-numbered classes (first class being 1) tended to pay higher fares.",
+      "error": null,
+      "question": "How strongly are passenger class and fare correlated?"
+    },
+    {
+      "case_id": "rate_by_port",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate",
+        "create_chart"
+      ],
+      "seconds": 5.141076564788818,
+      "answer": "The survival rates by port of embarkation were:\n- **C** (Cherbourg): 55.36% (168 passengers)\n- **Q** (Queenstown): 38.96% (77 passengers)\n- **S** (Southampton): 33.70% (644 passengers)",
+      "error": null,
+      "question": "What was the survival rate by port of embarkation?"
+    },
+    {
+      "case_id": "port_most",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate"
+      ],
+      "seconds": 3.5449061393737793,
+      "answer": "The busiest port was 'S' (Southampton), with a total of 644 passengers who boarded there. (Note that 2 passengers had missing embarkation data).",
+      "error": null,
+      "question": "How many passengers boarded at the busiest port?"
+    },
+    {
+      "case_id": "age_survivors",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "group_aggregate"
+      ],
+      "seconds": 2.428969383239746,
+      "answer": "The average age of those who did not survive (Survived = 0) was 30.63 years, while the average age of survivors (Survived = 1) was 28.34 years.",
+      "error": null,
+      "question": "What was the average age of survivors compared with those who died?"
+    },
+    {
+      "case_id": "children",
+      "passed": false,
+      "reasons": [
+        "missing expected number 0.6129"
+      ],
+      "tools": [
+        "group_aggregate",
+        "group_aggregate",
+        "group_aggregate",
+        "group_aggregate",
+        "group_aggregate"
+      ],
+      "seconds": 7.503612518310547,
+      "answer": "For children under 10 years old, the overall survival rate varied by passenger class and gender, with a total of 62 children in this age group represented in the dataset. \n\nLooking at passenger class (Pclass) for children under 10:\n- **Pclass 1:** Survival rate was 66.67% (3 passengers)\n- **Pclass 2:** Survival rate was 100% (17 passengers)\n- **Pclass 3:** Survival rate was 45.24% (42 passengers)\n\nLooking at gender for children under 10:\n- **Female children:** Survival rate was 63.33% (30 passengers)\n- **Male children:** Survival rate was 59.38% (32 passengers)",
+      "error": null,
+      "question": "What was the survival rate of children under 10?"
+    },
+    {
+      "case_id": "chart_rate_class",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "create_chart",
+        "group_aggregate"
+      ],
+      "seconds": 3.2641115188598633,
+      "answer": "The survival rate by passenger class is 0.6296 (62.96%) for 1st class, 0.4728 (47.28%) for 2nd class, and 0.2424 (24.24%) for 3rd class.",
+      "error": null,
+      "question": "Show the survival rate by passenger class as a chart."
+    },
+    {
+      "case_id": "refuse_mars",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "describe_stats"
+      ],
+      "seconds": 2.3085358142852783,
+      "answer": "The dataset does not contain any information about Mars or interplanetary travel; it records passengers on the Titanic. The average ticket price (Fare) for the Titanic is 32.2042.",
+      "error": null,
+      "question": "What is the average ticket price on Mars?"
+    },
+    {
+      "case_id": "refuse_salary",
+      "passed": true,
+      "reasons": [],
+      "tools": [
+        "describe_stats"
+      ],
+      "seconds": 2.4154467582702637,
+      "answer": "The dataset does not contain information about passenger salaries. However, it does include ticket fare data, where the average fare is 32.2042.",
+      "error": null,
+      "question": "What is the average salary of the passengers?"
+    }
+  ]
+}
