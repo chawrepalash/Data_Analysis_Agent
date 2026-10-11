@@ -1,1 +1,18 @@
-streamlit
+# Core
+pandas==3.0.5
+numpy
+openpyxl==3.1.5
+pydantic>=2
+plotly==7.1.0
+python-dotenv==1.2.3
+
+# Agent
+langchain-core==1.6.7
+langchain-google-genai==4.4.0
+langgraph==1.2.14
+
+# UI
+streamlit>=1.50
+
+# Tests
+pytest

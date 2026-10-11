@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage
 
 from eval import run_eval
 from eval.cases import CASES
+from eval.ratelimit import RateLimiter, RateLimitedLLM
 from eval.harness import Case, Outcome, check_case, number_present, numbers_in, summarize
 
 
@@ -27,7 +28,8 @@ def titanic_like(n=400):
 # ------------------------------- number matching -------------------------------
 
 def test_numbers_in_handles_commas_percent_and_negatives():
-    assert numbers_in("1,234 people; 96.81% survived; r = -0.55.") == [1234.0, 96.81, -0.55]
+    assert numbers_in(
+        "1,234 people; 96.81% survived; r = -0.55.") == [1234.0, 96.81, -0.55]
     assert numbers_in("no digits here") == []
 
 
@@ -60,8 +62,10 @@ def test_other_numbers_allow_small_rounding():
 def test_check_case_passes_and_fails_on_numbers():
     df = titanic_like()
     case = Case("c", "q", lambda d: [len(d)], any_tool=("describe_stats",))
-    assert check_case(case, df, "There are 400 rows.", ["describe_stats"], 0) == []
-    reasons = check_case(case, df, "There are 300 rows.", ["describe_stats"], 0)
+    assert check_case(case, df, "There are 400 rows.",
+                      ["describe_stats"], 0) == []
+    reasons = check_case(case, df, "There are 300 rows.",
+                         ["describe_stats"], 0)
     assert any("missing expected number 400" in r for r in reasons)
 
 
@@ -76,8 +80,10 @@ def test_check_case_requires_the_tool_and_the_chart():
 def test_refusal_cases_need_a_refusal_not_a_number():
     df = titanic_like()
     case = Case("r", "q", refusal=True)
-    assert check_case(case, df, "The dataset does not contain ticket prices on Mars.", [], 0) == []
-    assert check_case(case, df, "The average ticket price on Mars is 42.", [], 0)
+    assert check_case(
+        case, df, "The dataset does not contain ticket prices on Mars.", [], 0) == []
+    assert check_case(
+        case, df, "The average ticket price on Mars is 42.", [], 0)
 
 
 def test_summarize_ignores_errors_in_accuracy():
@@ -103,7 +109,8 @@ def test_every_truth_function_runs_and_gives_plain_numbers():
     df = titanic_like()
     for case in CASES:
         values = case.truth(df)
-        assert all(isinstance(v, (int, float)) and not pd.isna(v) for v in values), case.id
+        assert all(isinstance(v, (int, float)) and not pd.isna(v)
+                   for v in values), case.id
         if not (case.refusal or case.needs_chart):
             assert values, f"{case.id} has nothing to check"
 
@@ -113,7 +120,8 @@ def test_cases_pass_when_the_answer_states_the_truth():
     for case in CASES:
         if case.refusal:
             continue
-        answer = " and ".join(f"{v:.4f}" if isinstance(v, float) else str(v) for v in case.truth(df))
+        answer = " and ".join(f"{v:.4f}" if isinstance(
+            v, float) else str(v) for v in case.truth(df))
         tools = list(case.any_tool)
         assert check_case(case, df, answer, tools, 1) == [], case.id
 
@@ -137,13 +145,16 @@ def test_runner_scores_cases_and_writes_reports(tmp_path, monkeypatch):
     titanic_like().to_csv(tmp_path / "t.csv", index=False)
     llm = Scripted(
         [
-            AIMessage(content="The dataset does not contain Mars prices."),    # refuse_mars: pass
-            AIMessage(content="The average salary is 1000."),                  # refuse_salary: fail
+            # refuse_mars: pass
+            AIMessage(content="The dataset does not contain Mars prices."),
+            # refuse_salary: fail
+            AIMessage(content="The average salary is 1000."),
         ]
     )
     sleeps = []
-    summary = run_eval.main(str(tmp_path / "t.csv"), ["refuse_mars", "refuse_salary"], delay=0, llm=llm, sleep=sleeps.append)
-    assert summary["passed"] == 1 and summary["scored"] == 2 and len(sleeps) == 1
+    summary = run_eval.main(str(tmp_path / "t.csv"), [
+                            "refuse_mars", "refuse_salary"], delay=3, llm=llm, sleep=sleeps.append, rpm=0)
+    assert summary["passed"] == 1 and summary["scored"] == 2 and sleeps == [3]
 
     report = (tmp_path / "eval" / "RESULTS.md").read_text(encoding="utf-8")
     assert "1/2 correct (50%)" in report and "FAIL" in report and "pass" in report
@@ -155,7 +166,8 @@ def test_runner_counts_a_busy_api_as_an_error_not_a_failure(tmp_path, monkeypatc
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(run_eval, "OUT_DIR", tmp_path / "eval")
-    monkeypatch.setitem(llm_module.invoke_with_retry.__kwdefaults__, "sleep", lambda s: None)
+    monkeypatch.setitem(
+        llm_module.invoke_with_retry.__kwdefaults__, "sleep", lambda s: None)
     titanic_like().to_csv(tmp_path / "t.csv", index=False)
 
     class Busy:
@@ -165,5 +177,113 @@ def test_runner_counts_a_busy_api_as_an_error_not_a_failure(tmp_path, monkeypatc
         def invoke(self, messages, **kwargs):
             raise RuntimeError("503 UNAVAILABLE")
 
-    summary = run_eval.main(str(tmp_path / "t.csv"), ["rows"], delay=0, llm=Busy(), sleep=lambda s: None)
+    summary = run_eval.main(str(tmp_path / "t.csv"),
+                            ["rows"], delay=0, llm=Busy(), sleep=lambda s: None)
     assert summary["errors"] == 1 and summary["scored"] == 0
+
+
+# ------------------------------ rate limiting and --failed ------------------------------
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def test_failed_flag_also_runs_cases_that_never_ran(tmp_path, monkeypatch):
+    """--failed doubles as resume: after an interrupted run, the missing cases are run too."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_eval, "OUT_DIR", tmp_path / "eval")
+    monkeypatch.setattr(run_eval, "CASES", [
+                        c for c in CASES if c.id in ("refuse_mars", "refuse_salary")])
+    titanic_like().to_csv(tmp_path / "t.csv", index=False)
+    path = str(tmp_path / "t.csv")
+    common = dict(delay=0, sleep=lambda s: None, rpm=0)
+
+    run_eval.main(path, ["refuse_mars"], llm=Scripted(
+        [AIMessage(content="No such data.")]), **common)
+    second = Scripted(
+        [AIMessage(content="That is not available in the dataset.")])
+    summary = run_eval.main(path, llm=second, failed=True, **common)
+    assert second.replies == [] and summary["total"] == 2 and summary["passed"] == 2
+
+
+def test_limiter_allows_a_burst_then_waits_for_the_window():
+    clock = FakeClock()
+    limiter = RateLimiter(3, window=60, clock=clock.time, sleep=clock.sleep)
+    for _ in range(3):
+        limiter.wait()
+    assert clock.sleeps == []
+    # the 4th call must wait for the 1st to leave the window
+    limiter.wait()
+    assert len(clock.sleeps) == 1 and 60 <= clock.sleeps[0] <= 61
+    assert limiter.waited == pytest.approx(clock.sleeps[0])
+
+
+def test_limiter_does_not_wait_when_calls_are_spread_out():
+    clock = FakeClock()
+    limiter = RateLimiter(2, window=60, clock=clock.time, sleep=clock.sleep)
+    for _ in range(6):
+        limiter.wait()
+        clock.now += 40
+    assert clock.sleeps == []
+
+
+def test_limiter_rejects_a_zero_limit():
+    with pytest.raises(ValueError):
+        RateLimiter(0)
+
+
+def test_wrapper_paces_plain_and_tool_bound_calls():
+    clock = FakeClock()
+    limiter = RateLimiter(2, window=60, clock=clock.time, sleep=clock.sleep)
+    llm = RateLimitedLLM(Scripted([AIMessage(content="a"), AIMessage(
+        content="b"), AIMessage(content="c")]), limiter)
+    llm.invoke([])
+    llm.bind_tools([]).invoke([])
+    assert clock.sleeps == []
+    llm.invoke([])
+    assert len(clock.sleeps) == 1
+
+
+def test_failed_flag_reruns_only_failures_and_merges_with_saved_results(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_eval, "OUT_DIR", tmp_path / "eval")
+    monkeypatch.setattr(run_eval, "CASES", [
+                        c for c in CASES if c.id in ("refuse_mars", "refuse_salary")])
+    titanic_like().to_csv(tmp_path / "t.csv", index=False)
+    path = str(tmp_path / "t.csv")
+    common = dict(delay=0, sleep=lambda s: None, rpm=0)
+
+    first = Scripted([AIMessage(content="The dataset does not contain Mars prices."),
+                      AIMessage(content="The average salary is 1000.")])
+    run_eval.main(path, ["refuse_mars", "refuse_salary"], llm=first, **common)
+
+    second = Scripted(
+        [AIMessage(content="That information is not available in the data.")])
+    summary = run_eval.main(path, llm=second, failed=True, **common)
+    assert second.replies == []          # exactly one call: only the failed case ran
+    assert summary["total"] == 2 and summary["passed"] == 2
+
+    third = Scripted([])
+    # nothing left to re-run, no calls
+    run_eval.main(path, llm=third, failed=True, **common)
+
+
+def test_report_names_the_model_that_actually_ran(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_eval, "OUT_DIR", tmp_path / "eval")
+    titanic_like().to_csv(tmp_path / "t.csv", index=False)
+    llm = Scripted([AIMessage(content="That is not available in the data.")])
+    llm.model = "models/gemini-test-model"
+    run_eval.main(str(tmp_path / "t.csv"),
+                  ["refuse_mars"], llm=llm, delay=0, rpm=5, sleep=lambda s: None)
+    assert "`gemini-test-model`" in (tmp_path / "eval" /
+                                     "RESULTS.md").read_text(encoding="utf-8")
