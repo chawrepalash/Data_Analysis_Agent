@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage
 pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-from src.ui_helpers import cleaning_log_rows, column_rows, figures_from_json, fix_label, issue_rows, trace_rows  # noqa: E402
+from src.ui_helpers import cleaning_log_rows, load_env, column_rows, figures_from_json, fix_label, issue_rows, trace_rows  # noqa: E402
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 _ids = itertools.count(1)
@@ -213,7 +213,8 @@ def test_auto_analysis_without_an_api_key_shows_a_friendly_error(sample_dir, mon
     load_sample(at)
     next(b for b in at.button if b.label == "Run auto-analysis").click().run()
     assert not at.exception, at.exception
-    assert any("GOOGLE_API_KEY" in e.value for e in at.error)
+    assert any(
+        "GOOGLE_API_KEY" in e.value and "Looked for" in e.value for e in at.error)
 
 
 def test_busy_gemini_shows_a_warning_not_a_crash(sample_dir, monkeypatch):
@@ -256,3 +257,57 @@ def test_chat_answers_and_keeps_history(sample_dir, fake_llm):
         "Survival by sex?", "Answer one.", "And again?", "Answer two.",
     ]
     assert len(at.session_state["history"]) == 4
+
+
+# ------------------------------- loading the API key -------------------------------
+
+def test_load_env_reads_the_file_next_to_the_app(tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("GOOGLE_API_KEY=abc123\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # started from a different folder
+    assert load_env(tmp_path) == tmp_path / ".env"
+    assert os.environ["GOOGLE_API_KEY"] == "abc123"
+
+
+def test_load_env_replaces_an_empty_key_but_keeps_a_real_one(tmp_path, monkeypatch):
+    import os
+
+    (tmp_path / ".env").write_text("GOOGLE_API_KEY=from-file\n", encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_API_KEY", "")
+    load_env(tmp_path)
+    assert os.environ["GOOGLE_API_KEY"] == "from-file"
+    monkeypatch.setenv("GOOGLE_API_KEY", "already-set")
+    load_env(tmp_path)
+    assert os.environ["GOOGLE_API_KEY"] == "already-set"
+
+
+def test_load_env_without_a_file_returns_none(tmp_path):
+    assert load_env(tmp_path) is None
+
+
+def test_unknown_model_name_shows_a_readable_error(sample_dir, monkeypatch):
+    import src.agent.llm as llm_module
+
+    class GoogleModelNotFoundError(Exception):
+        pass
+
+    class WrongModel:
+        model = "gemini-old-model"
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages, **kwargs):
+            raise GoogleModelNotFoundError("404 model not found")
+
+    monkeypatch.setattr(llm_module, "get_llm",
+                        lambda: WrongModel(), raising=False)
+    at = start()
+    load_sample(at)
+    next(b for b in at.button if b.label == "Run auto-analysis").click().run()
+    assert not at.exception, at.exception
+    assert any("gemini-old-model" in e.value for e in at.error)

@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 
 import streamlit as st
-from dotenv import load_dotenv
 
 from config import MAX_FILE_MB, SUPPORTED_EXTENSIONS
 from src.agent.graph import (
@@ -23,12 +22,14 @@ from src.agent.graph import (
 from src.loader import DatasetStore, DataLoadError, load_bytes, load_file
 from src.tools.cleaning import apply_cleaning, propose_cleaning
 from src.tools.registry import get_tools, make_executor
-from src.ui_helpers import cleaning_log_rows, column_rows, figures_from_json, fix_label, issue_rows, trace_rows
+from src.ui_helpers import cleaning_log_rows, load_env, column_rows, figures_from_json, fix_label, issue_rows, trace_rows
 
 SAMPLE_PATH = "data/titanic.csv"
 
-st.set_page_config(page_title="AI Data Analysis Agent", page_icon="📊", layout="wide")
-load_dotenv()
+st.set_page_config(page_title="AI Data Analysis Agent",
+                   page_icon="📊", layout="wide")
+APP_DIR = Path(__file__).resolve().parent
+ENV_FILE = load_env(APP_DIR)
 
 
 # --------------------------------------------------------------------------
@@ -93,9 +94,11 @@ def get_llm_or_none():
         st.session_state.llm = get_llm()
         return st.session_state.llm
     except Exception as exc:
+        where = f"Looked for `{APP_DIR / '.env'}`: " + \
+            ("found" if ENV_FILE else "NOT found")
         st.error(
             "Could not start the Gemini client. Put GOOGLE_API_KEY in your .env file "
-            f"(or in Streamlit secrets).\n\n{type(exc).__name__}: {exc}"
+            f"(or in Streamlit secrets).\n\n{where}\n\n{type(exc).__name__}: {exc}"
         )
         return None
 
@@ -108,7 +111,17 @@ def run_guarded(action, *args):
         return action(*args)
     except Exception as exc:
         if is_transient(exc):
-            st.warning("Gemini is busy or rate-limited right now. Wait a minute and try again.")
+            st.warning(
+                "Gemini is busy or rate-limited right now. Wait a minute and try again.")
+            return None
+        if "ModelNotFound" in type(exc).__name__:
+            model = getattr(st.session_state.get("llm"),
+                            "model", None) or "(unknown)"
+            st.error(
+                f"Gemini does not recognise the model name `{model}`. Set the model setting in your "
+                "`.env` file (or in Streamlit secrets), or change GEMINI_MODEL in config.py, "
+                "to a model your key can use."
+            )
             return None
         raise
 
@@ -116,7 +129,8 @@ def run_guarded(action, *args):
 def show_charts(charts: list[str], key_prefix: str) -> None:
     for number, (figure, error) in enumerate(figures_from_json(charts), start=1):
         if figure is not None:
-            st.plotly_chart(figure, width="stretch", key=f"{key_prefix}_{number}")
+            st.plotly_chart(figure, width="stretch",
+                            key=f"{key_prefix}_{number}")
         else:
             st.warning(f"Chart {number} could not be shown ({error}).")
 
@@ -132,7 +146,8 @@ def show_trace(trace: list[dict], label: str = "What the agent did") -> None:
 
 with st.sidebar:
     st.title("📊 Data Analysis Agent")
-    st.caption("Upload a file, review the data, approve any cleaning, then analyze and ask questions.")
+    st.caption(
+        "Upload a file, review the data, approve any cleaning, then analyze and ask questions.")
 
     upload = st.file_uploader(
         f"CSV or Excel, up to {MAX_FILE_MB} MB",
@@ -142,7 +157,8 @@ with st.sidebar:
         signature = (upload.name, upload.size)
         if st.session_state.last_upload != signature:
             try:
-                set_dataset(load_bytes(upload.getvalue(), upload.name), upload.name)
+                set_dataset(load_bytes(upload.getvalue(),
+                            upload.name), upload.name)
                 st.session_state.last_upload = signature
             except DataLoadError as exc:
                 st.error(str(exc))
@@ -153,7 +169,8 @@ with st.sidebar:
     if st.session_state.dataset_id:
         st.divider()
         st.write(f"**Loaded:** {st.session_state.file_name}")
-        st.write("**Version:** " + ("cleaned" if st.session_state.cleaned else "original"))
+        st.write("**Version:** " +
+                 ("cleaned" if st.session_state.cleaned else "original"))
         if st.session_state.cleaned and st.button("Reset to the original upload"):
             st.session_state.store.reset(st.session_state.dataset_id)
             st.session_state.cleaned = False
@@ -164,14 +181,16 @@ with st.sidebar:
 
 if not st.session_state.dataset_id:
     st.title("AI Data Analysis Agent")
-    st.info("Upload a CSV or Excel file in the sidebar, or try the Titanic sample, to begin.")
+    st.info(
+        "Upload a CSV or Excel file in the sidebar, or try the Titanic sample, to begin.")
     st.stop()
 
 state = st.session_state
 store, dataset_id, profile = state.store, state.dataset_id, state.profile
 info = profile["profile"]
 
-tab_overview, tab_clean, tab_auto, tab_chat = st.tabs(["Overview", "Clean", "Auto-analysis", "Chat"])
+tab_overview, tab_clean, tab_auto, tab_chat = st.tabs(
+    ["Overview", "Clean", "Auto-analysis", "Chat"])
 
 
 # --------------------------------------------------------------------------
@@ -232,7 +251,8 @@ with tab_clean:
         log_rows = cleaning_log_rows(state.clean_log.data)
         if log_rows:
             st.dataframe(log_rows, hide_index=True, width="stretch")
-        st.caption("Earlier analysis and chat were cleared because the data changed.")
+        st.caption(
+            "Earlier analysis and chat were cleared because the data changed.")
 
 
 # --------------------------------------------------------------------------
@@ -243,7 +263,8 @@ with tab_auto:
     if st.button("Run auto-analysis", type="primary"):
         llm = get_llm_or_none()
         if llm is not None:
-            graph = build_auto_graph(store, llm, get_tools(), make_executor(store))
+            graph = build_auto_graph(
+                store, llm, get_tools(), make_executor(store))
             with st.spinner("Analyzing... this takes about 10 to 30 seconds."):
                 final = run_guarded(run_auto_analysis, graph, dataset_id)
             if final is not None:
@@ -251,7 +272,8 @@ with tab_auto:
 
     auto = state.auto
     if auto is None:
-        st.caption("The agent picks analyses and charts, runs them with its tools, then writes the findings.")
+        st.caption(
+            "The agent picks analyses and charts, runs them with its tools, then writes the findings.")
     else:
         st.markdown(auto["findings"])
         show_charts(auto["charts"], "auto_chart")
@@ -273,16 +295,20 @@ with tab_chat:
 
     question = st.chat_input("Ask a question about your data")
     if question:
-        state.chat_log.append({"role": "user", "content": question, "charts": [], "trace": []})
+        state.chat_log.append(
+            {"role": "user", "content": question, "charts": [], "trace": []})
         llm = get_llm_or_none()
         if llm is not None:
-            chat_graph = build_chat_graph(llm, get_tools(), make_executor(store))
+            chat_graph = build_chat_graph(
+                llm, get_tools(), make_executor(store))
             with st.spinner("Thinking..."):
-                turn = run_guarded(run_chat_turn, chat_graph, dataset_id, profile, state.history, question)
+                turn = run_guarded(run_chat_turn, chat_graph,
+                                   dataset_id, profile, state.history, question)
             if turn is not None:
                 state.history = turn.history
                 state.chat_log.append(
-                    {"role": "assistant", "content": turn.answer, "charts": turn.charts, "trace": turn.trace}
+                    {"role": "assistant", "content": turn.answer,
+                        "charts": turn.charts, "trace": turn.trace}
                 )
                 st.rerun()
         # Not answered (no client, or Gemini busy): drop the question so the user can ask again.

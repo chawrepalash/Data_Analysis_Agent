@@ -11,4 +11,4 @@ CSV_ENCODINGS = ("utf-8", "utf-8-sig", "latin-1")
 
 # Model name lives here so changing it is a one-line edit.
 # Check Google's Gemini API docs for the current Flash model name before use.
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"

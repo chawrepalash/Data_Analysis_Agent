@@ -1,5 +1,6 @@
 """Small pure helpers for the Streamlit app, kept out of app.py so they can be tested."""
 
+from pathlib import Path
 from typing import Any
 
 import plotly.graph_objects as go
@@ -94,3 +95,25 @@ def figures_from_json(charts: list[str]) -> list[tuple[go.Figure | None, str | N
         except Exception as exc:
             out.append((None, f"{type(exc).__name__}: {exc}"))
     return out
+
+
+def load_env(app_dir: Path) -> Path | None:
+    """Load the .env that sits next to app.py, whatever folder the app was started from.
+
+    Returns the path that was loaded, or None if there is no such file. Variables that are
+    already set in the environment are not overwritten, except an empty key, which is
+    replaced (an empty GOOGLE_API_KEY would otherwise hide the one in the file).
+    """
+    import os
+
+    from dotenv import dotenv_values, load_dotenv
+
+    path = Path(app_dir) / ".env"
+    if not path.is_file():
+        load_dotenv()  # fall back to the usual search from the working directory
+        return None
+    load_dotenv(path)
+    for name, value in dotenv_values(path).items():
+        if value and not os.environ.get(name):
+            os.environ[name] = value
+    return path
