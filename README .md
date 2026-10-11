@@ -5,7 +5,7 @@ Upload a CSV or Excel file and the agent profiles it, proposes cleaning (you app
 **The model never does the maths.** Every number in an answer comes from a validated pandas tool; the model only chooses which tool to call and explains the result.
 
 <!-- Add a screenshot or GIF of the app here: docs/demo.gif -->
-<!-- Live demo: https://YOUR-APP.streamlit.app -->
+<!-- Live demo: https://dataanalysisagentgit-dvzpm5tjoqxkcztneu6ev3.streamlit.app/ -->
 
 ## What it does
 
